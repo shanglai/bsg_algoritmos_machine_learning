@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Windy Gridworld - Q-Learning</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    canvas { border: 1px solid #444; margin-top: 15px; }
+    .q-log { font-family: monospace; font-size: 0.8em; white-space: pre-wrap; max-height: 300px; overflow-y: auto; background: #f8f9fa; padding: 8px; border: 1px solid #ddd; }
+  </style>
+</head>
+<body class="container py-4">
+  <h3 class="mb-3">Windy Gridworld - Q-Learning</h3>
+
+  <div class="row mb-3">
+    <div class="col-md-2">
+      <label class="form-label">Ancho Grid</label>
+      <input type="number" id="gridWidth" class="form-control" value="7" min="3">
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">Alto Grid</label>
+      <input type="number" id="gridHeight" class="form-control" value="5" min="3">
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">Meta (x,y)</label>
+      <input type="text" id="goalPos" class="form-control" value="6,3">
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">Velocidad (ms)</label>
+      <input type="number" id="stepDelay" class="form-control" value="200">
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">Iteraciones</label>
+      <input type="number" id="iterationsInput" class="form-control" value="100">
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">Max Pasos/Iteración</label>
+      <input type="number" id="maxStepsInput" class="form-control" value="50">
+    </div>
+  </div>
+
+  <div class="row mb-3">
+    <div class="col-md-2">
+      <label class="form-label">Epsilon</label>
+      <input type="number" step="0.01" id="epsilon" class="form-control" value="0.65">
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">Alpha</label>
+      <input type="number" step="0.01" id="alpha" class="form-control" value="0.95">
+    </div>
+    <div class="col-md-4">
+      <label class="form-label">Viento por Columna</label>
+      <input type="text" id="windVector" class="form-control" value="0,0,1,2,0,1,0">
+    </div>
+    <div class="col-md-2 d-flex align-items-end">
+      <button class="btn btn-success w-100" onclick="startGridworld()">Iniciar / Reset</button>
+    </div>
+    <div class="col-md-2 d-flex align-items-end">
+      <button class="btn btn-danger w-100" onclick="stopGridworld()">Detener</button>
+    </div>
+  </div>
+
+  <canvas id="canvas" width="420" height="300"></canvas>
+  <div class="mt-2">
+    <strong>Total Pasos:</strong> <span id="stepCounter">0</span> |
+    <strong>Iteración:</strong> <span id="iterationCounter">0</span> |
+    <strong>Recompensa:</strong> <span id="rewardCounter">0</span>
+  </div>
+
+  <div class="mt-3">
+    <h5>Log de Q-Learning</h5>
+    <div class="q-log" id="qlog"></div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+    let width, height, cellSize;
+    let agent, goal, wind;
+    let Q = {};
+    let totalSteps = 0;
+    let stepsInEpisode = 0;
+    let epsilon = 0.65, alpha = 0.95;
+    let interval;
+    let maxStepsPerEpisode = 50;
+    let maxIterations = 100;
+    let currentIteration = 0;
+    let totalReward = 0;
+    const actions = ["up", "right", "down", "left"];
+    let allPaths = [];
+    let currentPath = [];
+
+    function stateKey(x, y) { return `${x},${y}`; }
+
+    function resetGrid(config) {
+      width = config.gridW;
+      height = config.gridH;
+      cellSize = Math.min(canvas.width / width, canvas.height / height);
+      goal = { x: config.goalX, y: config.goalY };
+      wind = config.windArr;
+      epsilon = config.epsilon;
+      alpha = config.alpha;
+      maxIterations = config.iterations;
+      maxStepsPerEpisode = config.maxSteps;
+      agent = { x: 0, y: height - 1 };
+      Q = {};
+      totalSteps = 0;
+      stepsInEpisode = 0;
+      currentIteration = 0;
+      totalReward = 0;
+      allPaths = [];
+      currentPath = [];
+      document.getElementById("stepCounter").innerText = totalSteps;
+      document.getElementById("iterationCounter").innerText = currentIteration;
+      document.getElementById("rewardCounter").innerText = totalReward;
+      document.getElementById("qlog").innerText = "";
+      draw();
+    }
+
+    function getNextState(x, y, action) {
+      let nx = x, ny = y;
+      switch(action) {
+        case "up": ny--; break;
+        case "down": ny++; break;
+        case "left": nx--; break;
+        case "right": nx++; break;
+      }
+      ny -= (wind[nx] || 0);
+      return {
+        x: Math.max(0, Math.min(width - 1, nx)),
+        y: Math.max(0, Math.min(height - 1, ny))
+      };
+    }
+
+    function getBestAction(x, y) {
+      if (Math.random() < epsilon) return actions[Math.floor(Math.random() * 4)];
+      const key = stateKey(x, y);
+      let best = actions[0], bestVal = -Infinity;
+      for (let a of actions) {
+        const val = Q[key]?.[a] ?? 0;
+        if (val > bestVal) { bestVal = val; best = a; }
+      }
+      return best;
+    }
+
+    function updateQ(s, a, r, s2) {
+      const key = stateKey(s.x, s.y);
+      const nextKey = stateKey(s2.x, s2.y);
+      Q[key] = Q[key] || {};
+      Q[nextKey] = Q[nextKey] || {};
+      const q = Q[key][a] ?? 0;
+      const maxQ2 = Math.max(...actions.map(a2 => Q[nextKey][a2] ?? 0));
+      const updated = q + alpha * (r + maxQ2 - q);
+      Q[key][a] = updated;
+      const log = `Q[${key}][${a}] → ${updated.toFixed(3)}\n`;
+      const qlog = document.getElementById("qlog");
+      qlog.innerText += log;
+      qlog.scrollTop = qlog.scrollHeight;
+    }
+
+    function nextEpisode() {
+      if (currentPath.length > 1) allPaths.push([...currentPath]);
+      currentPath = [];
+      agent = { x: 0, y: height - 1 };
+      stepsInEpisode = 0;
+      currentIteration++;
+      document.getElementById("iterationCounter").innerText = currentIteration;
+      if (currentIteration >= maxIterations) stopGridworld();
+    }
+
+    function step() {
+      const action = getBestAction(agent.x, agent.y);
+      const prev = { ...agent };
+      const next = getNextState(agent.x, agent.y, action);
+      const reward = (next.x === goal.x && next.y === goal.y) ? 1 : 0;
+      updateQ(prev, action, reward, next);
+      currentPath.push({ ...agent });
+      agent = next;
+      totalSteps++;
+      stepsInEpisode++;
+      totalReward += reward;
+      document.getElementById("stepCounter").innerText = totalSteps;
+      document.getElementById("rewardCounter").innerText = totalReward;
+      draw();
+      if (reward > 0 || stepsInEpisode >= maxStepsPerEpisode) nextEpisode();
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          ctx.strokeStyle = "#aaa";
+          ctx.strokeRect(x * cellSize, y * cellSize, cellSize, cellSize);
+        }
+      }
+
+      ctx.fillStyle = "green";
+      ctx.fillRect(goal.x * cellSize, goal.y * cellSize, cellSize, cellSize);
+
+      ctx.strokeStyle = "rgba(100,100,100,0.25)";
+      ctx.lineWidth = 1;
+      for (let path of allPaths) {
+        ctx.beginPath();
+        ctx.moveTo(path[0].x * cellSize + cellSize / 2, path[0].y * cellSize + cellSize / 2);
+        for (let p of path) {
+          ctx.lineTo(p.x * cellSize + cellSize / 2, p.y * cellSize + cellSize / 2);
+        }
+        ctx.stroke();
+      }
+
+      ctx.strokeStyle = "gray";
+      ctx.lineWidth = 1;
+      if (currentPath.length > 1) {
+        ctx.beginPath();
+        ctx.moveTo(currentPath[0].x * cellSize + cellSize / 2, currentPath[0].y * cellSize + cellSize / 2);
+        for (let p of currentPath) {
+          ctx.lineTo(p.x * cellSize + cellSize / 2, p.y * cellSize + cellSize / 2);
+        }
+        ctx.stroke();
+      }
+
+      ctx.fillStyle = "blue";
+      ctx.beginPath();
+      ctx.arc(agent.x * cellSize + cellSize / 2, agent.y * cellSize + cellSize / 2, cellSize / 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    function startGridworld() {
+      stopGridworld();
+      const gridW = parseInt(document.getElementById("gridWidth").value);
+      const gridH = parseInt(document.getElementById("gridHeight").value);
+      const [goalX, goalY] = document.getElementById("goalPos").value.split(",").map(Number);
+      const windArr = document.getElementById("windVector").value.split(",").map(Number);
+      const stepDelay = parseInt(document.getElementById("stepDelay").value);
+      const eps = parseFloat(document.getElementById("epsilon").value);
+      const alp = parseFloat(document.getElementById("alpha").value);
+      const iterations = parseInt(document.getElementById("iterationsInput").value);
+      const maxSteps = parseInt(document.getElementById("maxStepsInput").value);
+      resetGrid({ gridW, gridH, goalX, goalY, windArr, epsilon: eps, alpha: alp, iterations, maxSteps });
+      interval = setInterval(step, stepDelay);
+    }
+
+    function stopGridworld() {
+      if (interval) clearInterval(interval);
+    }
+  </script>
+</body>
+</html>
