@@ -28,4 +28,5 @@ Repositorio del curso Algoritmos de Machine Learning
 - [c6s6b1](https://colab.research.google.com/drive/1gyGJCoCRgg-ZsJn8uQnvxs_AZnObs-o9?usp=sharing)
 - [c6s7b1](https://colab.research.google.com/drive/1uHQhMHBh0F1E8LbNSIhFZur3RbWHEmmL?usp=sharing)
 - [c6s7b3](https://colab.research.google.com/drive/1R1wHBYM_DTCvQc_gVT2zSQX9bZRET2zK?usp=sharing)
+- [c6s8b1](https://colab.research.google.com/drive/1bQJNvqLlsIRV6K2uvaoA_JKGyMtmJlbP?usp=sharing)
 - [c7s1b1](https://colab.research.google.com/drive/1DFmCcKMgMULDA7KbJfV_F1rlgrsNk_Dv?usp=sharing)
